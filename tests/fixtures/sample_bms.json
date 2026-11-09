@@ -1,0 +1,25 @@
+[
+  {
+    "record_id": "bms-001",
+    "vin": "KMHEVTEST00000001",
+    "pack_id": "PACK-001",
+    "soc": 72.5,
+    "soh": 96.1,
+    "temp": 31.2,
+    "voltage_pack_v": 380.4,
+    "current_a": 12.5,
+    "power_watts": 4750,
+    "status": "RUNNING"
+  },
+  {
+    "record_id": "bms-002",
+    "vin": "KMHEVTEST00000002",
+    "pack_id": "PACK-002",
+    "soc": 150,
+    "soh": 88.0,
+    "temp": 29.0,
+    "voltage_pack_v": 372.0,
+    "current_a": -5.0,
+    "status": "IDLE"
+  }
+]

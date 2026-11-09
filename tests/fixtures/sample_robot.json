@@ -1,0 +1,30 @@
+[
+  {
+    "robot_id": "cobot-01",
+    "line_id": "L1",
+    "station_id": "S1",
+    "cycle_time_ms": 1200,
+    "power_watts": 450,
+    "program_name": "assemble_a",
+    "status": "RUNNING",
+    "good_parts": 100,
+    "reject_parts": 2,
+    "temperature_c": 42.0,
+    "vibration_mm_s": 1.2,
+    "alarms": []
+  },
+  {
+    "robot_id": "cobot-02",
+    "line_id": "L1",
+    "station_id": "S2",
+    "cycle_time_ms": 100,
+    "power_watts": 2500,
+    "program_name": "assemble_b",
+    "status": "ERROR",
+    "good_parts": 50,
+    "reject_parts": 20,
+    "temperature_c": 75.0,
+    "vibration_mm_s": 7.5,
+    "alarms": ["OVERHEAT"]
+  }
+]
