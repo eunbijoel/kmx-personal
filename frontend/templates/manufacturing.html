@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Manufacturing Data → AAS Pipeline</h2>
+  <p>Upload → preprocess and quality checks → metadata extraction → AAS generation → confirm and register in the catalog</p>
+  <div class="stepper">
+    <div id="mstep1" class="step active">1 Upload</div>
+    <div id="mstep2" class="step">2 Quality / Metadata</div>
+    <div id="mstep3" class="step">3 Review AAS</div>
+    <div id="mstep4" class="step">4 Register / Search</div>
+  </div>
+</div>
+
+<div class="dataset-layout">
+  <div>
+    <div class="card">
+      <h3>1) File upload</h3>
+      <input id="mFile" type="file" accept=".csv,.json">
+      <label>dataset_id (optional)</label>
+      <input id="mDatasetId" placeholder="auto-ev-bms-v1">
+      <label>Title (optional)</label>
+      <input id="mTitle" placeholder="BMS telemetry batch">
+      <label>Robot rules</label>
+      <select id="mRobotMode">
+        <option value="auto">auto</option>
+        <option value="never">never</option>
+        <option value="always">always</option>
+      </select>
+      <div class="grid">
+        <button class="btn" onclick="runPreview()">Run preview</button>
+        <button class="btn secondary" onclick="loadCatalog()">Search catalog</button>
+      </div>
+      <p id="mStatus"></p>
+    </div>
+
+    <div class="card">
+      <h3>4) Registered catalog</h3>
+      <input id="mQuery" placeholder="Search query" onkeydown="if(event.key==='Enter')loadCatalog()">
+      <pre id="mCatalog" style="white-space:pre-wrap;max-height:320px;overflow:auto;"></pre>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h3>2) Quality / metadata</h3>
+      <pre id="mQuality" style="white-space:pre-wrap;max-height:240px;overflow:auto;"></pre>
+      <pre id="mMeta" style="white-space:pre-wrap;max-height:180px;overflow:auto;"></pre>
+    </div>
+    <div class="card">
+      <h3>3) AAS review</h3>
+      <p id="mValidation"></p>
+      <pre id="mAas" style="white-space:pre-wrap;max-height:280px;overflow:auto;"></pre>
+      <button class="btn" id="mRegisterBtn" disabled onclick="confirmRegister()">Confirm and register</button>
+      <p id="mRegisterResult"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentDraftId = null;
+
+function setMStep(step) {
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById(`mstep${i}`);
+    el.classList.remove("active", "done");
+    if (i < step) el.classList.add("done");
+    if (i === step) el.classList.add("active");
+  }
+}
+
+async function runPreview() {
+  const fileInput = document.getElementById("mFile");
+  if (!fileInput.files.length) {
+    document.getElementById("mStatus").textContent = "Please select a file.";
+    return;
+  }
+  setMStep(1);
+  document.getElementById("mStatus").textContent = "Processing...";
+  const form = new FormData();
+  form.append("file", fileInput.files[0]);
+  form.append("dataset_id", document.getElementById("mDatasetId").value || "");
+  form.append("title", document.getElementById("mTitle").value || "");
+  form.append("robot_mode", document.getElementById("mRobotMode").value);
+
+  const res = await fetch("/ui/api/manufacturing/pipeline/upload-preview", {
+    method: "POST",
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("mStatus").textContent = data.detail || "Request failed";
+    return;
+  }
+  currentDraftId = data.draft_id;
+  document.getElementById("mStatus").textContent = `draft=${data.draft_id}, status=${data.status}`;
+  document.getElementById("mQuality").textContent = JSON.stringify({
+    quality_counts: data.preprocess?.quality_counts,
+    robot_rules_applied: data.preprocess?.robot_rules_applied,
+    dataset_summary: data.preprocess?.dataset_summary,
+    sample_issues: (data.preprocess?.records || []).slice(0, 2).map(r => ({
+      index: r.index,
+      quality_flag: r.quality_flag,
+      issues: r.issues,
+    })),
+  }, null, 2);
+  document.getElementById("mMeta").textContent = JSON.stringify(data.metadata || {}, null, 2);
+  const validation = data.aas_validation || {};
+  document.getElementById("mValidation").textContent =
+    `validation ok=${validation.ok}, engine=${validation.engine}, errors=${(validation.errors || []).length}`;
+  document.getElementById("mAas").textContent = JSON.stringify({
+    asset_id: data.aas?.asset_id,
+    mapping_used: data.aas?.mapping_used,
+    unmapped_fields: data.aas?.unmapped_fields,
+    shell: data.aas?.shell,
+    submodels: data.aas?.submodels,
+  }, null, 2);
+  document.getElementById("mRegisterBtn").disabled = !validation.ok;
+  setMStep(validation.ok ? 3 : 2);
+}
+
+async function confirmRegister() {
+  if (!currentDraftId) return;
+  setMStep(4);
+  const res = await fetch("/ui/api/manufacturing/pipeline/register", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      draft_id: currentDraftId,
+      confirm: true,
+      title: document.getElementById("mTitle").value || null,
+    }),
+  });
+  const data = await res.json();
+  document.getElementById("mRegisterResult").textContent = JSON.stringify(data.catalog_item || data, null, 2);
+  await loadCatalog();
+}
+
+async function loadCatalog() {
+  const q = document.getElementById("mQuery").value || "";
+  const res = await fetch(`/ui/api/manufacturing/catalog?q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+  document.getElementById("mCatalog").textContent = JSON.stringify(data, null, 2);
+  setMStep(4);
+}
+</script>
+{% endblock %}

@@ -194,6 +194,11 @@ async def logs(request: Request) -> HTMLResponse:
     return _render(request, "logs.html", "사용 내역/정산")
 
 
+@router.get("/manufacturing", response_class=HTMLResponse)
+async def manufacturing(request: Request) -> HTMLResponse:
+    return _render(request, "manufacturing.html", "Manufacturing AAS Pipeline")
+
+
 @router.get("/ui/api/search")
 async def ui_search(q: str) -> JSONResponse:
     query = q.strip() or "온도"
