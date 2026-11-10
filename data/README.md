@@ -1,6 +1,6 @@
 # K-EDC 정렬 `data` 디렉터리
 
-이 저장소의 `data`는 **제어 평면(Control Plane)** 과 **데이터 평면(Data Plane)** 역할을 폴더로 분리합니다. 런타임은 우선 아래 **신규 경로**를 읽고, 없으면 기존 루트 경로로 fallback 합니다 (`backend/api/frontend_routes.py`).
+이 저장소의 `data`는 **제어 평면(Control Plane)** 과 **데이터 평면(Data Plane)** 역할을 폴더로 분리합니다. 런타임은 `data/control_plane/` 과 `data/data_plane/` 경로를 사용합니다 (`backend/api/frontend_routes.py`).
 
 ## 흐름 (요약)
 
@@ -47,10 +47,10 @@
 
 | HTTP                                     | 소스 파일                                                                            |
 | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| `GET /ui/api/catalog`                    | `control_plane/catalog.json` → fallback `data/catalog.json`                      |
-| `GET /ui/api/assets`                     | `control_plane/assets.json` → fallback `data/assets.json`                        |
-| `GET /ui/api/contracts`                  | `control_plane/contracts.json` → fallback                                        |
-| `GET /ui/api/credentials`                | `control_plane/vc_store.json` → fallback                                         |
+| `GET /ui/api/catalog`                    | `control_plane/catalog.json`                                                     |
+| `GET /ui/api/assets`                     | `control_plane/assets.json`                                                      |
+| `GET /ui/api/contracts`                  | `control_plane/contracts.json`                                                   |
+| `GET /ui/api/credentials`                | `control_plane/vc_store.json`                                                    |
 | `GET /ui/api/analyze-sample`             | `data_plane/samples/*.json` → fallback `data/sample_telemetry/*.json` → 레거시 JSON |
 | `GET /ui/api/dashboard-summary?sample=…` | 위와 동일 샘플 경로                                                                      |
 

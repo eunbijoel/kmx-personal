@@ -116,58 +116,29 @@ User request
 ## Project Structure
 
 ```
-kmx-platform/
+kmx/
 ├── backend/
 │   ├── main.py                    # FastAPI main app
 │   ├── requirements.txt
-│   ├── test_core.py               # Unit tests for core logic (52 tests)
-│   │
-│   ├── api/                       # API routers
-│   │   ├── connector_routes.py    # EDC connector API
-│   │   ├── identity_routes.py     # DID/VC API
-│   │   ├── policy_routes.py       # ODRL policy API
-│   │   ├── contract_routes.py     # Contract API
-│   │   ├── metadata_routes.py     # Metadata/ontology API
-│   │   ├── ai_routes.py           # AI model API
-│   │   ├── clearinghouse_routes.py# Clearing House API
-│   │   ├── agent_routes.py        # Agentic AI API
-│   │   └── search_routes.py       # Vector search API
-│   │
-│   ├── connector/
-│   │   ├── control_plane.py       # EDC Control Plane
-│   │   └── data_plane.py          # EDC Data Plane (P2P transfer)
-│   │
-│   ├── identity/
-│   │   ├── did.py                 # W3C DID management
-│   │   └── vc.py                  # Verifiable Credentials
-│   │
-│   ├── policy/
-│   │   └── odrl_engine.py         # ODRL policy engine
-│   │
-│   ├── contract/
-│   │   └── contract_manager.py    # Data contract management
-│   │
+│   ├── api/
+│   │   ├── routes.py              # LIVE REST API (inline)
+│   │   ├── frontend_routes.py     # Jinja UI + /ui/api/*
+│   │   └── manufacturing_routes.py# Manufacturing → AAS pipeline API
+│   ├── manufacturing/             # Preprocess, quality, AAS, catalog
 │   ├── metadata/
-│   │   └── extractor.py           # DCAT metadata extraction
-│   │
-│   ├── semantic/
-│   │   ├── ontology_mapper.py     # Manufacturing ontology mapping
-│   │   └── vector_search.py       # Semantic search
-│   │
-│   ├── ai/
-│   │   ├── model_api.py           # 5 core manufacturing AI models
-│   │   └── agent.py               # Agentic AI module
-│   │
-│   ├── clearinghouse/
-│   │   └── logger.py              # Hash-chain audit log
-│   │
+│   │   └── extractor.py           # Field-dictionary metadata extraction
 │   └── db/
 │       ├── models.py              # SQLAlchemy ORM models
 │       └── database.py            # DB connection/initialization
-│
+├── frontend/                      # Jinja templates + static
+├── data/
+│   ├── control_plane/             # Catalog, mappings, field dictionary
+│   ├── data_plane/samples/        # Sample datasets
+│   └── aas_store/                 # AAS drafts / catalog registry (runtime)
+├── tests/                         # pytest
 ├── docker/
-│   └── Dockerfile.backend
-├── docker-compose.yml
+│   ├── Dockerfile.backend
+│   └── docker-compose.yml
 └── README.md
 ```
 
@@ -179,8 +150,8 @@ kmx-platform/
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/kmx-platform
-cd kmx-platform/backend
+git clone https://github.com/eunbijoel/kmx-personal.git
+cd kmx-personal/backend
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -190,27 +161,27 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # 4. Check the API docs
 # http://localhost:8000/docs
+# Manufacturing UI: http://localhost:8000/manufacturing
 ```
 
-### Option 2: Docker Compose (recommended for production)
+### Option 2: Docker Compose
 
 ```bash
-# Run the full stack (PostgreSQL + Backend + Provider Connector)
-docker-compose up -d
+# From the repository root, pass the compose file path
+docker compose -f docker/docker-compose.yml up -d
 
 # Check logs
-docker-compose logs -f kmx-backend
+docker compose -f docker/docker-compose.yml logs -f kmx-backend
 
 # Stop
-docker-compose down
+docker compose -f docker/docker-compose.yml down
 ```
 
-### Option 3: Test the Core Logic (no dependencies)
+### Option 3: Tests
 
 ```bash
-cd backend
-python3 test_core.py
-# → Verify that all 52 tests pass
+# From the repository root
+python -m pytest tests -v
 ```
 
 ---

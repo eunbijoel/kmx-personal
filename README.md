@@ -75,58 +75,29 @@ flowchart TD
 ## 프로젝트 구조
 
 ```
-kmx-platform/
+kmx/
 ├── backend/
 │   ├── main.py                    # FastAPI 메인 앱
 │   ├── requirements.txt
-│   ├── test_core.py               # 핵심 로직 단위 테스트 (52개)
-│   │
-│   ├── api/                       # API 라우터
-│   │   ├── connector_routes.py    # EDC 커넥터 API
-│   │   ├── identity_routes.py     # DID/VC API
-│   │   ├── policy_routes.py       # ODRL 정책 API
-│   │   ├── contract_routes.py     # 계약 API
-│   │   ├── metadata_routes.py     # 메타데이터/온톨로지 API
-│   │   ├── ai_routes.py           # AI 모델 API
-│   │   ├── clearinghouse_routes.py# Clearing House API
-│   │   ├── agent_routes.py        # Agentic AI API
-│   │   └── search_routes.py       # 벡터 검색 API
-│   │
-│   ├── connector/
-│   │   ├── control_plane.py       # EDC Control Plane
-│   │   └── data_plane.py          # EDC Data Plane (P2P 전송)
-│   │
-│   ├── identity/
-│   │   ├── did.py                 # W3C DID 관리
-│   │   └── vc.py                  # Verifiable Credentials
-│   │
-│   ├── policy/
-│   │   └── odrl_engine.py         # ODRL 정책 엔진
-│   │
-│   ├── contract/
-│   │   └── contract_manager.py    # 데이터 계약 관리
-│   │
+│   ├── api/
+│   │   ├── routes.py              # LIVE REST API (인라인)
+│   │   ├── frontend_routes.py     # Jinja UI + /ui/api/*
+│   │   └── manufacturing_routes.py# 제조 데이터 → AAS 파이프라인 API
+│   ├── manufacturing/             # 전처리 · 품질 · AAS · 카탈로그
 │   ├── metadata/
-│   │   └── extractor.py           # DCAT 메타데이터 추출
-│   │
-│   ├── semantic/
-│   │   ├── ontology_mapper.py     # 제조 온톨로지 매핑
-│   │   └── vector_search.py       # 의미 기반 검색
-│   │
-│   ├── ai/
-│   │   ├── model_api.py           # 5대 제조 AI 모델
-│   │   └── agent.py               # Agentic AI 모듈
-│   │
-│   ├── clearinghouse/
-│   │   └── logger.py              # 해시체인 감사 로그
-│   │
+│   │   └── extractor.py           # 필드 사전 기반 메타데이터 추출
 │   └── db/
 │       ├── models.py              # SQLAlchemy ORM 모델
 │       └── database.py            # DB 연결/초기화
-│
+├── frontend/                      # Jinja 템플릿 + static
+├── data/
+│   ├── control_plane/             # 카탈로그 · 매핑 · field dictionary
+│   ├── data_plane/samples/        # 샘플 데이터
+│   └── aas_store/                 # AAS draft / catalog registry (런타임)
+├── tests/                         # pytest
 ├── docker/
-│   └── Dockerfile.backend
-├── docker-compose.yml
+│   ├── Dockerfile.backend
+│   └── docker-compose.yml
 └── README.md
 ```
 
@@ -138,8 +109,8 @@ kmx-platform/
 
 ```bash
 # 1. 저장소 클론
-git clone https://github.com/your-org/kmx-platform
-cd kmx-platform/backend
+git clone https://github.com/eunbijoel/kmx-personal.git
+cd kmx-personal/backend
 
 # 2. 의존성 설치
 pip install -r requirements.txt
@@ -149,6 +120,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # 4. API 문서 확인
 # http://localhost:8000/docs
+# Manufacturing UI: http://localhost:8000/manufacturing
 ```
 
 ### Windows PowerShell 안정 실행 런북 (문제 재발 시)
@@ -174,25 +146,24 @@ py -3 -m venv .venv
 - `http://127.0.0.1:8000/docs`가 아닌 다른 화면이 뜨면 8000 포트를 다른 앱이 점유한 상태일 수 있습니다.
 - 점유 확인: `netstat -ano | findstr :8000`
 
-### 방법 2: Docker Compose (운영 권장)
+### 방법 2: Docker Compose
 
 ```bash
-# 전체 스택 실행 (PostgreSQL + Backend + Provider Connector)
-docker-compose up -d
+# 레포 루트에서 Compose 파일 경로 지정
+docker compose -f docker/docker-compose.yml up -d
 
 # 로그 확인
-docker-compose logs -f kmx-backend
+docker compose -f docker/docker-compose.yml logs -f kmx-backend
 
 # 중지
-docker-compose down
+docker compose -f docker/docker-compose.yml down
 ```
 
-### 방법 3: 핵심 로직 테스트 (의존성 없음)
+### 방법 3: 테스트
 
 ```bash
-cd backend
-python3 test_core.py
-# → 52개 테스트 전체 통과 확인
+# 레포 루트에서
+python -m pytest tests -v
 ```
 
 ---
