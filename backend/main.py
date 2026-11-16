@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from api.agent_workbench_routes import router as agent_workbench_router
 from api.frontend_routes import router as frontend_router
 from api.manufacturing_routes import router as manufacturing_router
 from api.routes import router
@@ -15,6 +16,7 @@ app = FastAPI(
 app.include_router(router)
 app.include_router(frontend_router)
 app.include_router(manufacturing_router)
+app.include_router(agent_workbench_router)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 app.mount("/static", StaticFiles(directory=str(ROOT_DIR / "frontend" / "static")), name="static")
