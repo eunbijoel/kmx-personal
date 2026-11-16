@@ -1,0 +1,22 @@
+[
+  {
+    "record_id": "wb-bms-001",
+    "vin": "KMHEVAGENT000001",
+    "pack_id": "PACK-A1",
+    "soc": 71.2,
+    "soh": 95.4,
+    "temp": 33.1,
+    "power_watts": 4200,
+    "status": "RUNNING"
+  },
+  {
+    "record_id": "wb-bms-002",
+    "vin": "KMHEVAGENT000002",
+    "pack_id": "PACK-A2",
+    "soc": 68.0,
+    "soh": 94.1,
+    "temp": 34.8,
+    "power_watts": 3900,
+    "status": "IDLE"
+  }
+]
