@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Manufacturing AI Agent Workbench</h2>
+  <p>Upload manufacturing data → retrieve mock rulebook evidence → map with rules/LLM → validate → review → export approved JSON.</p>
+  <p style="color:#b45309;font-size:13px;">Rulebook is a <strong>test mock</strong>, not an official KSA/ISO/IDTA standard. LLM suggestions are advisory only.</p>
+</div>
+
+<div class="card">
+  <div class="grid">
+    <div>
+      <label>Data file (CSV/JSON)</label>
+      <input id="wbFile" type="file" accept=".csv,.json">
+      <label>Equipment description</label>
+      <input id="wbEquip" placeholder="e.g. EV battery pack test bench" value="EV battery pack test bench">
+      <label>Process description</label>
+      <input id="wbProcess" placeholder="e.g. charge/discharge telemetry" value="Charge/discharge telemetry capture">
+    </div>
+    <div>
+      <label>Allow Ollama LLM</label>
+      <select id="wbLlm">
+        <option value="false" selected>false (rule fallback)</option>
+        <option value="true">true</option>
+      </select>
+      <div class="grid" style="margin-top:12px">
+        <button class="btn" onclick="runUpload()">Run Agent</button>
+        <button class="btn secondary" onclick="runSample()">Load BMS sample</button>
+      </div>
+      <p id="wbStatus"></p>
+    </div>
+  </div>
+</div>
+
+<div class="dataset-layout workbench-layout">
+  <div class="card">
+    <h3>Original Data</h3>
+    <pre id="wbOriginal" class="wb-pre"></pre>
+  </div>
+  <div class="card">
+    <h3>Agent Interpretation</h3>
+    <pre id="wbMapping" class="wb-pre"></pre>
+  </div>
+  <div class="card">
+    <h3>Validation & Evidence</h3>
+    <pre id="wbEvidence" class="wb-pre"></pre>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Human Review</h3>
+  <p id="wbReviewMeta"></p>
+  <label>Reason</label>
+  <input id="wbReason" placeholder="optional review reason">
+  <div class="grid">
+    <button class="btn" onclick="review('approve')">Approve</button>
+    <button class="btn secondary" onclick="review('reject')">Reject</button>
+    <button class="btn secondary" onclick="exportJson()">Export Approved JSON</button>
+  </div>
+  <p id="wbReviewResult"></p>
+</div>
+
+<style>
+.workbench-layout { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wb-pre { white-space: pre-wrap; max-height: 420px; overflow: auto; font-size: 12px; background: #f8fafc; padding: 10px; border-radius: 8px; }
+@media (max-width: 1100px) { .workbench-layout { grid-template-columns: 1fr; } }
+</style>
+
+<script>
+let currentRun = null;
+
+function setStatus(msg) { document.getElementById("wbStatus").textContent = msg; }
+
+function renderRun(run) {
+  currentRun = run;
+  document.getElementById("wbOriginal").textContent = JSON.stringify({
+    filename: run.profile?.filename,
+    record_count: run.profile?.record_count,
+    equipment_description: run.profile?.equipment_description,
+    process_description: run.profile?.process_description,
+    fields: run.profile?.fields,
+    sample_records: run.profile?.sample_records,
+  }, null, 2);
+
+  document.getElementById("wbMapping").textContent = JSON.stringify({
+    llm_available: run.mapping?.llm_available,
+    llm_error: run.mapping?.llm_error,
+    used_rule_fallback: run.mapping?.used_rule_fallback,
+    uncertain_fields: run.mapping?.uncertain_fields,
+    candidates: run.mapping?.candidates,
+    retrieved_rules: run.retrieved_rules,
+  }, null, 2);
+
+  document.getElementById("wbEvidence").textContent = JSON.stringify({
+    validation: run.validation,
+    evidence: run.evidence,
+    notes: run.notes,
+  }, null, 2);
+
+  document.getElementById("wbReviewMeta").textContent =
+    `run_id=${run.run_id} status=${run.status} review=${run.review_status}`;
+}
+
+async function runUpload() {
+  const fileInput = document.getElementById("wbFile");
+  if (!fileInput.files.length) { setStatus("Please select a file."); return; }
+  setStatus("Running agent workflow...");
+  const form = new FormData();
+  form.append("file", fileInput.files[0]);
+  form.append("equipment_description", document.getElementById("wbEquip").value || "");
+  form.append("process_description", document.getElementById("wbProcess").value || "");
+  form.append("allow_llm", document.getElementById("wbLlm").value);
+  const res = await fetch("/ui/api/agent-workbench/run-upload", { method: "POST", body: form });
+  const data = await res.json();
+  if (!res.ok) { setStatus(data.detail || "Failed"); return; }
+  setStatus("Completed.");
+  renderRun(data);
+}
+
+async function runSample() {
+  setStatus("Running sample...");
+  const form = new FormData();
+  form.append("sample", "workbench_bms.json");
+  form.append("equipment_description", document.getElementById("wbEquip").value || "");
+  form.append("process_description", document.getElementById("wbProcess").value || "");
+  form.append("allow_llm", "false");
+  const res = await fetch("/ui/api/agent-workbench/run-sample", { method: "POST", body: form });
+  const data = await res.json();
+  if (!res.ok) { setStatus(data.detail || "Failed"); return; }
+  setStatus("Sample completed.");
+  renderRun(data);
+}
+
+async function review(action) {
+  if (!currentRun) { document.getElementById("wbReviewResult").textContent = "No run loaded."; return; }
+  const res = await fetch(`/ui/api/agent-workbench/runs/${currentRun.run_id}/review`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      action,
+      reason: document.getElementById("wbReason").value || "",
+      actor: "user",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("wbReviewResult").textContent = data.detail || "Review failed";
+    return;
+  }
+  renderRun(data);
+  document.getElementById("wbReviewResult").textContent = `Review applied: ${data.review_status}`;
+}
+
+async function exportJson() {
+  if (!currentRun) return;
+  const res = await fetch(`/ui/api/agent-workbench/runs/${currentRun.run_id}/export`);
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("wbReviewResult").textContent = data.detail || "Export blocked";
+    return;
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${currentRun.run_id}-approved.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  document.getElementById("wbReviewResult").textContent = "Approved JSON downloaded.";
+}
+</script>
+{% endblock %}

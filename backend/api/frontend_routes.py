@@ -199,6 +199,11 @@ async def manufacturing(request: Request) -> HTMLResponse:
     return _render(request, "manufacturing.html", "Manufacturing AAS Pipeline")
 
 
+@router.get("/agent-workbench", response_class=HTMLResponse)
+async def agent_workbench(request: Request) -> HTMLResponse:
+    return _render(request, "agent_workbench.html", "Manufacturing AI Agent Workbench")
+
+
 @router.get("/ui/api/search")
 async def ui_search(q: str) -> JSONResponse:
     query = q.strip() or "온도"
