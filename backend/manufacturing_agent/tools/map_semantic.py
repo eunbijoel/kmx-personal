@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from manufacturing_agent.llm import OLLAMA_MODEL, PROMPT_VERSION, check_ollama_available, generate_json
+from manufacturing_agent.schemas import (
+    DataProfile,
+    MappingCandidate,
+    MappingProposal,
+    RuleHit,
+    utc_now,
+)
+
+
+async def propose_mappings(
+    profile: DataProfile,
+    rule_hits: list[RuleHit],
+    *,
+    allow_llm: bool = True,
+) -> tuple[MappingProposal, dict]:
+    started = utc_now()
+    by_field: dict[str, list[RuleHit]] = {}
+    for hit in rule_hits:
+        # matched_on may be alias; attach via score ranking per source field query result order
+        # We re-group by best lexical attachment below.
+        pass
+
+    # Rebuild field -> hits using adapter-style rematch from hit list names/aliases already scored
+    field_names = [f.field_name for f in profile.fields]
+    for field_name in field_names:
+        related = [
+            hit
+            for hit in rule_hits
+            if field_name.lower() in hit.matched_on.lower()
+            or hit.matched_on.lower() in field_name.lower()
+            or field_name.lower() in hit.name.lower()
+            or any(tok and tok in hit.name.lower() for tok in field_name.lower().replace("_", " ").split())
+        ]
+        # fallback: include top global hits with weaker confidence later
+        by_field[field_name] = sorted(related, key=lambda h: h.score, reverse=True)[:3]
+
+    rule_candidates: list[MappingCandidate] = []
+    uncertain: list[str] = []
+    for field in profile.fields:
+        hits = by_field.get(field.field_name) or []
+        if not hits:
+            uncertain.append(field.field_name)
+            rule_candidates.append(
+                MappingCandidate(
+                    source_field=field.field_name,
+                    decision="abstain",
+                    confidence=0.0,
+                    rationale="No rulebook concept matched this field.",
+                    source="rule",
+                )
+            )
+            continue
+        top = hits[0]
+        alts = [
+            {
+                "concept_id": h.concept_id,
+                "concept_name": h.name,
+                "score": h.score,
+                "aas_submodel": h.aas_submodel,
+                "aas_property": h.aas_property,
+            }
+            for h in hits[1:3]
+        ]
+        decision = "map" if top.score >= 0.8 else "needs_review"
+        if field.missing_ratio > 0.5:
+            decision = "needs_review"
+            uncertain.append(field.field_name)
+        # Unit unclear heuristic: field name lacks unit suffix and concept has unit
+        unit_assumption = None
+        if top.unit and not any(suf in field.field_name.lower() for suf in ["_c", "_w", "_pct", "_ms", "mm_s", "temp"]):
+            if decision == "map":
+                decision = "needs_review"
+            unit_assumption = f"assumed unit {top.unit} from rulebook concept"
+            if field.field_name not in uncertain:
+                uncertain.append(field.field_name)
+        rule_candidates.append(
+            MappingCandidate(
+                source_field=field.field_name,
+                concept_id=top.concept_id,
+                concept_name=top.name,
+                aas_submodel=top.aas_submodel,
+                aas_property=top.aas_property,
+                confidence=float(top.score),
+                evidence_ids=[top.concept_id],
+                alternatives=alts,
+                rationale=f"Matched rulebook concept via '{top.matched_on}'.",
+                decision=decision,
+                unit_assumption=unit_assumption,
+                source="rule",
+            )
+        )
+
+    llm_available = False
+    llm_error = None
+    used_fallback = True
+    model_name = None
+    candidates = rule_candidates
+
+    if allow_llm:
+        status = await check_ollama_available()
+        llm_available = bool(status.get("available") and status.get("model_loaded"))
+        if not llm_available:
+            llm_error = status.get("error") or "Ollama unavailable"
+        else:
+            try:
+                llm_payload = await _llm_refine(profile, rule_hits, rule_candidates)
+                candidates = _merge_llm(rule_candidates, llm_payload)
+                used_fallback = False
+                model_name = OLLAMA_MODEL
+            except Exception as exc:  # noqa: BLE001
+                llm_error = str(exc)
+                candidates = rule_candidates
+                used_fallback = True
+
+    proposal = MappingProposal(
+        candidates=candidates,
+        uncertain_fields=sorted(set(uncertain + [c.source_field for c in candidates if c.decision != "map"])),
+        model_name=model_name,
+        prompt_version=PROMPT_VERSION,
+        llm_available=llm_available,
+        llm_error=llm_error,
+        used_rule_fallback=used_fallback,
+    )
+    finished = utc_now()
+    trace = {
+        "tool": "semantic_mapping",
+        "status": "ok" if llm_error is None or used_fallback else "error",
+        "started_at": started,
+        "finished_at": finished,
+        "detail": {
+            "llm_available": llm_available,
+            "llm_error": llm_error,
+            "used_rule_fallback": used_fallback,
+            "candidate_count": len(candidates),
+        },
+    }
+    return proposal, trace
+
+
+async def _llm_refine(
+    profile: DataProfile,
+    rule_hits: list[RuleHit],
+    rule_candidates: list[MappingCandidate],
+) -> dict[str, Any]:
+    prompt = {
+        "task": "semantic_mapping",
+        "instructions": [
+            "Return JSON with key candidates: array of objects.",
+            "Each object keys: source_field, concept_id, concept_name, aas_submodel, aas_property, confidence, evidence_ids, decision, rationale, unit_assumption.",
+            "decision must be one of map|needs_review|abstain.",
+            "Only use concept_id values present in retrieved_rules. Do not invent concepts.",
+            "If unsure, use needs_review or abstain.",
+        ],
+        "equipment_description": profile.equipment_description,
+        "process_description": profile.process_description,
+        "fields": [f.model_dump() for f in profile.fields],
+        "retrieved_rules": [h.model_dump() for h in rule_hits[:40]],
+        "rule_baseline": [c.model_dump() for c in rule_candidates],
+    }
+    return await generate_json(json.dumps(prompt, ensure_ascii=False))
+
+
+def _merge_llm(
+    baseline: list[MappingCandidate],
+    llm_payload: dict[str, Any],
+) -> list[MappingCandidate]:
+    rows = llm_payload.get("candidates")
+    if not isinstance(rows, list):
+        raise RuntimeError("LLM payload missing candidates array")
+    by_field = {c.source_field: c for c in baseline}
+    allowed_ids = {
+        evid
+        for c in baseline
+        for evid in c.evidence_ids
+    } | {c.concept_id for c in baseline if c.concept_id}
+
+    out: list[MappingCandidate] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source_field = str(row.get("source_field") or "")
+        if not source_field or source_field in seen:
+            continue
+        seen.add(source_field)
+        base = by_field.get(source_field)
+        concept_id = row.get("concept_id")
+        evidence_ids = [str(x) for x in (row.get("evidence_ids") or [])]
+        # Reject invented concepts
+        if concept_id and str(concept_id) not in allowed_ids and not evidence_ids:
+            decision = "abstain"
+            rationale = "Rejected LLM concept not present in retrieved rulebook evidence."
+            concept_id = None
+        else:
+            decision = str(row.get("decision") or "needs_review")
+            if decision not in {"map", "needs_review", "abstain"}:
+                decision = "needs_review"
+            rationale = str(row.get("rationale") or (base.rationale if base else ""))
+        out.append(
+            MappingCandidate(
+                source_field=source_field,
+                concept_id=str(concept_id) if concept_id else (base.concept_id if base else None),
+                concept_name=row.get("concept_name") or (base.concept_name if base else None),
+                aas_submodel=row.get("aas_submodel") or (base.aas_submodel if base else None),
+                aas_property=row.get("aas_property") or (base.aas_property if base else None),
+                confidence=float(row.get("confidence") or (base.confidence if base else 0.0)),
+                evidence_ids=evidence_ids or (base.evidence_ids if base else []),
+                alternatives=base.alternatives if base else [],
+                rationale=rationale,
+                decision=decision,  # type: ignore[arg-type]
+                unit_assumption=row.get("unit_assumption") or (base.unit_assumption if base else None),
+                source="hybrid" if base else "llm",
+            )
+        )
+    # ensure all baseline fields remain
+    for field, base in by_field.items():
+        if field not in seen:
+            out.append(base)
+    return out
