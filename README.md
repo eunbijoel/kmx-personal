@@ -82,8 +82,10 @@ kmx/
 │   ├── api/
 │   │   ├── routes.py              # LIVE REST API (인라인)
 │   │   ├── frontend_routes.py     # Jinja UI + /ui/api/*
-│   │   └── manufacturing_routes.py# 제조 데이터 → AAS 파이프라인 API
+│   │   ├── manufacturing_routes.py# 제조 데이터 → AAS 파이프라인 API
+│   │   └── agent_workbench_routes.py # AI Agent Workbench API
 │   ├── manufacturing/             # 전처리 · 품질 · AAS · 카탈로그
+│   ├── manufacturing_agent/       # Agent workflow · HITL · Evidence
 │   ├── metadata/
 │   │   └── extractor.py           # 필드 사전 기반 메타데이터 추출
 │   └── db/
@@ -93,13 +95,30 @@ kmx/
 ├── data/
 │   ├── control_plane/             # 카탈로그 · 매핑 · field dictionary
 │   ├── data_plane/samples/        # 샘플 데이터
-│   └── aas_store/                 # AAS draft / catalog registry (런타임)
+│   ├── aas_store/                 # AAS draft / catalog registry (런타임)
+│   └── agent_workbench/           # mock rulebook · samples · run store
+├── docs/manufacturing_agent_workbench.md
 ├── tests/                         # pytest
 ├── docker/
 │   ├── Dockerfile.backend
 │   └── docker-compose.yml
 └── README.md
 ```
+
+### Manufacturing AI Agent Workbench
+
+```bash
+# 서버 실행 후
+# UI: http://127.0.0.1:8000/agent-workbench
+# API: /ui/api/agent-workbench/*
+
+# 테스트
+python -m pytest tests/test_agent_workbench.py -v
+```
+
+- 룰북은 **테스트용 mock**이며 공식 표준이 아닙니다.
+- Ollama가 없으면 규칙 기반 fallback으로 안전하게 동작합니다.
+- 상세: `docs/manufacturing_agent_workbench.md`
 
 ---
 

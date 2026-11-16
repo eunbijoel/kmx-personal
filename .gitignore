@@ -7,4 +7,6 @@ __pycache__/
 kmx_platform.db
 data/aas_store/**
 !data/aas_store/.gitkeep
+data/agent_workbench/runs/
 data/keti1234!
+.pytest_cache/
