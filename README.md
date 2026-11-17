@@ -107,18 +107,37 @@ kmx/
 
 ### Manufacturing AI Agent Workbench
 
-```bash
-# 서버 실행 후
-# UI: http://127.0.0.1:8000/agent-workbench
-# API: /ui/api/agent-workbench/*
+**경로 (kmx-personal / 이 저장소 루트 기준)**
 
-# 테스트
-python -m pytest tests/test_agent_workbench.py -v
+```powershell
+# 의존성 (최초 1회)
+cd backend
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 서버
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+
+# UI / API
+# http://127.0.0.1:8000/agent-workbench
+# http://127.0.0.1:8000/ui/api/agent-workbench/*
+
+# 전체 테스트 (저장소 루트)
+cd ..
+.\backend\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
-- 룰북은 **테스트용 mock**이며 공식 표준이 아닙니다.
-- Ollama가 없으면 규칙 기반 fallback으로 안전하게 동작합니다.
-- 상세: `docs/manufacturing_agent_workbench.md`
+**사용자 사용 순서:** 업로드(또는 샘플 실행) → 룰북 검색·매핑·검증·Evidence 확인 → 승인/수정/거절 → 승인된 결과만 내보내기. 원본 해시가 바뀌면 `POST /runs/{id}/check-source-hash`로 재승인 요구.
+
+| 항목 | 상태 |
+|---|---|
+| Mock Rulebook (`data/agent_workbench/rulebooks/`) | **MOCK** — 공식 KSA/ISO/IDTA 아님. 향후 KSA 어댑터 교체 가능 |
+| Agent Workflow + HITL + Evidence + export 게이트 | **동작** (pytest + API로 검증) |
+| Ollama LLM 매핑 보정 | **선택** — 없거나 모델 미탑재 시 규칙 fallback, `llm_error`/`used_rule_fallback`로 구분 |
+| 모의 EDC / K-EDC | **미연동** — export artifact의 future flag만 존재 |
+| Workbench RBAC / Identity | **미구현** — `actor` 문자열만 기록 |
+
+상세: `docs/manufacturing_agent_workbench.md`
 
 ---
 
