@@ -31,6 +31,7 @@ def retrieve_rules_for_profile(
                         name=str(row.get("name") or ""),
                         score=float(row.get("score") or 0.0),
                         matched_on=str(row.get("matched_on") or field.field_name),
+                        source_field=field.field_name,
                         aas_submodel=row.get("aas_submodel"),
                         aas_property=row.get("aas_property"),
                         unit=row.get("unit"),

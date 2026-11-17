@@ -49,6 +49,7 @@ class RuleHit(BaseModel):
     name: str
     score: float
     matched_on: str
+    source_field: str | None = None
     aas_submodel: str | None = None
     aas_property: str | None = None
     unit: str | None = None

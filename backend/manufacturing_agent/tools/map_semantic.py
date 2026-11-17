@@ -20,25 +20,20 @@ async def propose_mappings(
     allow_llm: bool = True,
 ) -> tuple[MappingProposal, dict]:
     started = utc_now()
-    by_field: dict[str, list[RuleHit]] = {}
+    # Group retrieve hits by the field they were queried for (avoids cross-field leakage).
+    by_field: dict[str, list[RuleHit]] = {f.field_name: [] for f in profile.fields}
     for hit in rule_hits:
-        # matched_on may be alias; attach via score ranking per source field query result order
-        # We re-group by best lexical attachment below.
-        pass
-
-    # Rebuild field -> hits using adapter-style rematch from hit list names/aliases already scored
-    field_names = [f.field_name for f in profile.fields]
-    for field_name in field_names:
-        related = [
-            hit
-            for hit in rule_hits
-            if field_name.lower() in hit.matched_on.lower()
-            or hit.matched_on.lower() in field_name.lower()
-            or field_name.lower() in hit.name.lower()
-            or any(tok and tok in hit.name.lower() for tok in field_name.lower().replace("_", " ").split())
-        ]
-        # fallback: include top global hits with weaker confidence later
-        by_field[field_name] = sorted(related, key=lambda h: h.score, reverse=True)[:3]
+        key = hit.source_field
+        if key and key in by_field:
+            by_field[key].append(hit)
+        else:
+            # Legacy hits without source_field: attach only on strong lexical match
+            for field_name in by_field:
+                fl = field_name.lower()
+                if fl == hit.matched_on.lower() or fl in hit.matched_on.lower() or hit.matched_on.lower() in fl:
+                    by_field[field_name].append(hit)
+    for field_name, hits in by_field.items():
+        by_field[field_name] = sorted(hits, key=lambda h: h.score, reverse=True)[:3]
 
     rule_candidates: list[MappingCandidate] = []
     uncertain: list[str] = []
@@ -73,7 +68,8 @@ async def propose_mappings(
             uncertain.append(field.field_name)
         # Unit unclear heuristic: field name lacks unit suffix and concept has unit
         unit_assumption = None
-        if top.unit and not any(suf in field.field_name.lower() for suf in ["_c", "_w", "_pct", "_ms", "mm_s", "temp"]):
+        unit_markers = ("_c", "_w", "_pct", "_ms", "mm_s", "_kpa", "kpa", "temp", "pressure", "vib")
+        if top.unit and not any(suf in field.field_name.lower() for suf in unit_markers):
             if decision == "map":
                 decision = "needs_review"
             unit_assumption = f"assumed unit {top.unit} from rulebook concept"
