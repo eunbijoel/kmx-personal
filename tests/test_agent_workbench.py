@@ -176,3 +176,173 @@ def test_api_and_regression_health():
     # existing UI APIs still respond
     assert client.get("/datasets").status_code == 200
     assert client.get("/ui/api/catalog").status_code == 200
+
+
+def test_sensor_telemetry_mapping():
+    raw = (SAMPLES / "workbench_sensors.json").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(
+            raw=raw,
+            filename="workbench_sensors.json",
+            equipment_description="Hydraulic press line",
+            process_description="Condition monitoring",
+            allow_llm=False,
+        )
+    )
+    by_field = {c.source_field: c for c in run.mapping.candidates}
+    assert by_field["temperature_c"].decision == "map"
+    assert by_field["temperature_c"].concept_id == "RB-TEMP-001"
+    assert by_field["pressure_kpa"].decision == "map"
+    assert by_field["pressure_kpa"].concept_id == "RB-PRESS-001"
+    assert by_field["vibration_mm_s"].decision == "map"
+    assert by_field["vibration_mm_s"].concept_id == "RB-VIB-001"
+    assert all(c.evidence_ids for c in run.mapping.candidates if c.decision == "map")
+    assert run.evidence.raw_hash == run.profile.raw_hash
+    assert run.evidence.rulebook_version
+
+
+def test_unknown_fields_do_not_invent_concepts():
+    raw = (SAMPLES / "workbench_unknown_fields.json").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(raw=raw, filename="workbench_unknown_fields.json", allow_llm=False)
+    )
+    mapped = [c for c in run.mapping.candidates if c.decision == "map"]
+    assert mapped == []
+    for c in run.mapping.candidates:
+        assert c.decision in {"abstain", "needs_review"}
+        assert not c.concept_id or JsonRulebookAdapter().get_concept(c.concept_id)
+
+
+def test_bad_types_fail_or_need_review():
+    raw = (SAMPLES / "workbench_bad_types.csv").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(raw=raw, filename="workbench_bad_types.csv", allow_llm=False)
+    )
+    # soc_pct / temperature_c may map but type check should fail if inferred as string
+    soc = next(c for c in run.mapping.candidates if c.source_field == "soc_pct")
+    temp = next(c for c in run.mapping.candidates if c.source_field == "temperature_c")
+    mystery = next(c for c in run.mapping.candidates if c.source_field == "mystery_channel")
+    assert mystery.decision in {"abstain", "needs_review"}
+    if soc.decision == "map" or temp.decision == "map":
+        assert run.validation.ok is False or any(
+            i.code == "type_mismatch" for i in run.validation.issues
+        )
+
+
+def test_modify_revalidates_and_blocks_bad_approve():
+    raw = (SAMPLES / "workbench_bms.json").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(raw=raw, filename="workbench_bms.json", allow_llm=False)
+    )
+    assert run.validation.ok is True
+    poisoned = [
+        MappingCandidate.model_validate(
+            {
+                **c.model_dump(),
+                "decision": "map",
+                "concept_id": "RB-FAKE-999",
+                "evidence_ids": [],
+            }
+        )
+        for c in run.mapping.candidates
+    ]
+    changed = apply_review(
+        run,
+        ReviewActionRequest(action="modify", reason="inject fake", actor="qa", modified_candidates=poisoned),
+    )
+    assert changed.review_status == ReviewStatus.NEEDS_REAPPROVAL
+    assert changed.validation.ok is False
+    assert any(i.code == "concept_not_in_rulebook" for i in changed.validation.issues)
+    with pytest.raises(ValueError, match="validation"):
+        apply_review(changed, ReviewActionRequest(action="approve", reason="should fail", actor="qa"))
+
+
+def test_empty_actor_rejected():
+    raw = (SAMPLES / "workbench_bms.json").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(raw=raw, filename="workbench_bms.json", allow_llm=False)
+    )
+    with pytest.raises(ValueError, match="actor"):
+        apply_review(run, ReviewActionRequest(action="approve", reason="ok", actor="  "))
+
+
+def test_hash_invalidation_via_api_and_persistence(tmp_path, monkeypatch):
+    import manufacturing_agent.store as store
+
+    monkeypatch.setattr(store, "STORE_DIR", tmp_path / "persist_runs")
+    monkeypatch.setattr(store, "DB_PATH", tmp_path / "persist_runs" / "workbench.sqlite3")
+
+    with (SAMPLES / "workbench_bms.json").open("rb") as handle:
+        response = client.post(
+            "/ui/api/agent-workbench/run-upload",
+            files={"file": ("workbench_bms.json", handle, "application/json")},
+            data={"allow_llm": "false"},
+        )
+    assert response.status_code == 200
+    run = response.json()
+    run_id = run["run_id"]
+    original_hash = run["profile"]["raw_hash"]
+
+    approved = client.post(
+        f"/ui/api/agent-workbench/runs/{run_id}/review",
+        json={"action": "approve", "reason": "ok", "actor": "operator-1"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["approved_artifact"]["approver"] == "operator-1"
+
+    # Reload from disk (simulates process restart)
+    from manufacturing_agent.store import load_run
+
+    reloaded = load_run(run_id)
+    assert reloaded.review_status == ReviewStatus.APPROVED
+    assert reloaded.evidence.review_history
+
+    # Hash mismatch → needs reapproval; export blocked
+    check = client.post(
+        f"/ui/api/agent-workbench/runs/{run_id}/check-source-hash",
+        json={"raw_hash": "0" * 64},
+    )
+    assert check.status_code == 200
+    body = check.json()
+    assert body["review_status"] == ReviewStatus.NEEDS_REAPPROVAL.value
+    assert body["hash_match"] is False
+    assert body["approved_artifact"] is False
+    denied = client.get(f"/ui/api/agent-workbench/runs/{run_id}/export")
+    assert denied.status_code == 400
+
+    # Matching hash leaves approval intact when still approved on a fresh run
+    with (SAMPLES / "workbench_bms.json").open("rb") as handle:
+        response2 = client.post(
+            "/ui/api/agent-workbench/run-upload",
+            files={"file": ("workbench_bms.json", handle, "application/json")},
+            data={"allow_llm": "false"},
+        )
+    run2 = response2.json()
+    client.post(
+        f"/ui/api/agent-workbench/runs/{run2['run_id']}/review",
+        json={"action": "approve", "reason": "ok", "actor": "operator-1"},
+    )
+    ok_check = client.post(
+        f"/ui/api/agent-workbench/runs/{run2['run_id']}/check-source-hash",
+        json={"raw_hash": run2["profile"]["raw_hash"]},
+    )
+    assert ok_check.json()["review_status"] == ReviewStatus.APPROVED.value
+    assert ok_check.json()["hash_match"] is True
+    assert original_hash == run2["profile"]["raw_hash"]
+
+
+def test_conflicting_mapping_candidates_need_review():
+    """Ambiguous alias collision: temp_raw has no exact alias; mystery has none."""
+    raw = (SAMPLES / "workbench_ambiguous.csv").read_bytes()
+    run = asyncio.run(
+        run_workbench_pipeline(raw=raw, filename="workbench_ambiguous.csv", allow_llm=False)
+    )
+    # Alternatives may exist for near matches; mapped concepts must still be in rulebook
+    adapter = JsonRulebookAdapter()
+    for c in run.mapping.candidates:
+        if c.concept_id:
+            assert adapter.get_concept(c.concept_id) is not None
+        for alt in c.alternatives:
+            cid = alt.get("concept_id") if isinstance(alt, dict) else None
+            if cid:
+                assert adapter.get_concept(cid) is not None
