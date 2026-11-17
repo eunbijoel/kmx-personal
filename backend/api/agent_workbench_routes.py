@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from manufacturing_agent.hitl import apply_review
+from manufacturing_agent.hitl import apply_review, mark_needs_reapproval_if_hash_changed
 from manufacturing_agent.schemas import MappingCandidate, ReviewActionRequest
 from manufacturing_agent.store import list_runs, load_run
 from manufacturing_agent.workflow import export_approved_json, run_workbench_pipeline
@@ -32,6 +32,10 @@ class ReviewBody(BaseModel):
     reason: str = ""
     actor: str = "user"
     modified_candidates: list[MappingCandidate] | None = None
+
+
+class SourceHashBody(BaseModel):
+    raw_hash: str = Field(..., min_length=1, description="SHA-256 hex of current source payload")
 
 
 @router.post("/run-upload")
@@ -114,6 +118,27 @@ async def export_run(run_id: str) -> JSONResponse:
         return JSONResponse({"detail": "run not found"}, status_code=404)
     except ValueError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=400)
+
+
+@router.post("/runs/{run_id}/check-source-hash")
+async def check_source_hash(run_id: str, body: SourceHashBody) -> JSONResponse:
+    """Invalidate APPROVED status when the source payload hash no longer matches."""
+    try:
+        run = load_run(run_id)
+        updated = mark_needs_reapproval_if_hash_changed(run, body.raw_hash)
+        return JSONResponse(
+            {
+                "run_id": updated.run_id,
+                "review_status": updated.review_status.value,
+                "status": updated.status,
+                "raw_hash": updated.profile.raw_hash,
+                "provided_hash": body.raw_hash,
+                "hash_match": body.raw_hash == updated.profile.raw_hash,
+                "approved_artifact": updated.approved_artifact is not None,
+            }
+        )
+    except FileNotFoundError:
+        return JSONResponse({"detail": "run not found"}, status_code=404)
 
 
 @router.get("/samples")

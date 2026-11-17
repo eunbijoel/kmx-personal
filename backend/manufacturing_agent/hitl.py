@@ -1,23 +1,29 @@
 from __future__ import annotations
 
-import copy
 from typing import Any
 
+from manufacturing_agent.rulebook.json_adapter import JsonRulebookAdapter
 from manufacturing_agent.schemas import (
     MappingCandidate,
     ReviewActionRequest,
     ReviewStatus,
+    ToolTrace,
     WorkbenchRun,
     utc_now,
 )
 from manufacturing_agent.store import save_run
+from manufacturing_agent.tools.validate import validate_mapping
 
 
 def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRun:
+    actor = (request.actor or "").strip()
+    if not actor:
+        raise ValueError("actor is required for review actions (client-supplied identity; no RBAC yet)")
+
     before = [c.model_dump() for c in run.mapping.candidates]
     history_entry: dict[str, Any] = {
         "at": utc_now(),
-        "actor": request.actor,
+        "actor": actor,
         "action": request.action,
         "reason": request.reason,
     }
@@ -28,29 +34,35 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
         run.approved_artifact = None
         history_entry["diff"] = {"before": before, "after": before}
     elif request.action == "approve":
+        if run.review_status == ReviewStatus.NEEDS_REAPPROVAL and not run.validation.ok:
+            raise ValueError("Cannot approve while validation has FAIL issues after modification")
         if any(c.decision == "map" and not c.concept_id for c in run.mapping.candidates):
             raise ValueError("Cannot approve mappings that lack concept_id")
         if not run.validation.ok:
-            # Allow approve only if failures are absent; unverified may remain with reason
             raise ValueError("Cannot approve while validation has FAIL issues")
         run.review_status = ReviewStatus.APPROVED
         run.status = "approved"
-        run.approved_artifact = build_approved_artifact(run)
+        run.approved_artifact = build_approved_artifact(run, approver=actor)
         history_entry["diff"] = {"before": before, "after": before}
     elif request.action == "modify":
         if not request.modified_candidates:
             raise ValueError("modified_candidates required for modify action")
-        after_models = [MappingCandidate.model_validate(c) if not isinstance(c, MappingCandidate) else c for c in request.modified_candidates]
+        after_models = [
+            MappingCandidate.model_validate(c) if not isinstance(c, MappingCandidate) else c
+            for c in request.modified_candidates
+        ]
         after = [c.model_dump() for c in after_models]
+        run.mapping.candidates = after_models
+        # Re-validate after human edits so Evidence stays linked to current candidates.
+        report, validate_trace = validate_mapping(run.profile, run.mapping, JsonRulebookAdapter())
+        run.validation = report
+        run.evidence.validation = report
+        run.evidence.tool_traces.append(ToolTrace.model_validate(validate_trace))
         if after != before:
-            run.mapping.candidates = after_models
-            run.review_status = ReviewStatus.MODIFIED
-            run.status = "modified_pending_reapproval"
             run.approved_artifact = None
-            # modification invalidates previous approval
-            history_entry["diff"] = {"before": before, "after": after}
-            # force reapproval marker
             run.review_status = ReviewStatus.NEEDS_REAPPROVAL
+            run.status = "modified_pending_reapproval"
+            history_entry["diff"] = {"before": before, "after": after}
         else:
             history_entry["diff"] = {"before": before, "after": after}
             run.notes.append("Modify requested but no candidate changes detected")
@@ -64,7 +76,7 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
     return run
 
 
-def build_approved_artifact(run: WorkbenchRun) -> dict[str, Any]:
+def build_approved_artifact(run: WorkbenchRun, *, approver: str = "user") -> dict[str, Any]:
     return {
         "artifact_type": "kmx.manufacturing_agent.mapping",
         "interface": {
@@ -75,7 +87,13 @@ def build_approved_artifact(run: WorkbenchRun) -> dict[str, Any]:
         },
         "run_id": run.run_id,
         "approved_at": utc_now(),
+        "approver": approver,
+        "approver_auth": "client_supplied_actor_only",
         "raw_hash": run.profile.raw_hash,
+        "artifact_hash_basis": {
+            "raw_hash": run.profile.raw_hash,
+            "mapping_candidate_count": len(run.mapping.candidates),
+        },
         "rulebook": {
             "rulebook_id": run.evidence.rulebook_id,
             "version": run.evidence.rulebook_version,
