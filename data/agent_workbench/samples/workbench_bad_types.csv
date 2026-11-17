@@ -1,0 +1,3 @@
+soc_pct,temperature_c,status,mystery_channel
+hot,not-a-number,RUNNING,42
+warm,abc,IDLE,41

@@ -1,0 +1,16 @@
+[
+  {
+    "equipment_id": "PRESS-01",
+    "temperature_c": 86.4,
+    "pressure_kpa": 420.5,
+    "vibration_mm_s": 2.1,
+    "status": "RUNNING"
+  },
+  {
+    "equipment_id": "PRESS-01",
+    "temperature_c": 88.0,
+    "pressure_kpa": 418.2,
+    "vibration_mm_s": 2.4,
+    "status": "RUNNING"
+  }
+]

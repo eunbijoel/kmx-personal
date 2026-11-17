@@ -33,6 +33,32 @@
       "tags": ["predictive-maintenance"]
     },
     {
+      "concept_id": "RB-PRESS-001",
+      "name": "ProcessPressure",
+      "aliases": ["pressure_kpa", "pressure", "press"],
+      "description": "Measured process pressure in kilopascals.",
+      "value_type": "number",
+      "unit": "kPa",
+      "required": false,
+      "constraints": {"min": 0, "max": 100000},
+      "aas_submodel": "OperationalData",
+      "aas_property": "Pressure",
+      "tags": ["process", "hydraulics"]
+    },
+    {
+      "concept_id": "RB-EQ-001",
+      "name": "EquipmentIdentifier",
+      "aliases": ["equipment_id", "machine_id", "asset_id"],
+      "description": "Shop-floor equipment or asset identifier.",
+      "value_type": "string",
+      "unit": null,
+      "required": false,
+      "constraints": {},
+      "aas_submodel": "AssetIdentification",
+      "aas_property": "EquipmentId",
+      "tags": ["identity"]
+    },
+    {
       "concept_id": "RB-PWR-001",
       "name": "ActivePower",
       "aliases": ["power_watts", "power", "active_power_w"],
