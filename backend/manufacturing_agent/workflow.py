@@ -5,7 +5,7 @@ from typing import Any
 
 from manufacturing_agent.hitl import build_approved_artifact
 from manufacturing_agent.profiling import profile_records, profile_upload
-from manufacturing_agent.rulebook.json_adapter import JsonRulebookAdapter
+from manufacturing_agent.rulebook.factory import get_rulebook_adapter
 from manufacturing_agent.schemas import (
     EvidenceBundle,
     ReviewStatus,
@@ -27,13 +27,16 @@ async def run_workbench_pipeline(
     equipment_description: str = "",
     process_description: str = "",
     allow_llm: bool = True,
+    rulebook_source: str | None = None,
 ) -> WorkbenchRun:
     """Fixed-step agent workflow (no arbitrary shell/file tools)."""
-    adapter = JsonRulebookAdapter()
+    adapter = get_rulebook_adapter(rulebook_source)
     meta = adapter.metadata()
     run_id = f"agent-{uuid.uuid4().hex[:12]}"
     notes = [
-        "Rulebook is a TEST mock and is not an official KSA/ISO/IDTA standard.",
+        str(meta.get("disclaimer") or "Rulebook content is not an official KSA/ISO/IDTA standard."),
+        f"Rulebook source={meta.get('rulebook_id')} version={meta.get('version')} "
+        f"official_standard={meta.get('official_standard')}.",
         "LLM output is advisory and must pass schema + rulebook validation.",
     ]
 
