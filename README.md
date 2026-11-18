@@ -127,17 +127,18 @@ cd ..
 .\backend\.venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
-**사용자 사용 순서:** 업로드(또는 샘플 실행) → 룰북 검색·매핑·검증·Evidence 확인 → 승인/수정/거절 → 승인된 결과만 내보내기. 원본 해시가 바뀌면 `POST /runs/{id}/check-source-hash`로 재승인 요구.
+**사용자 사용 순서:** Identity 발급 → 업로드(또는 샘플) → 룰북 검색·매핑·검증·Evidence → DID 기반 승인/수정/거절 → 승인된 결과만 내보내기. 원본 해시 변경 시 `POST /runs/{id}/check-source-hash`.
 
 | 항목 | 상태 |
 |---|---|
-| Mock Rulebook (`data/agent_workbench/rulebooks/`) | **MOCK** — 공식 KSA/ISO/IDTA 아님. 향후 KSA 어댑터 교체 가능 |
-| Agent Workflow + HITL + Evidence + export 게이트 | **동작** (pytest + API로 검증) |
-| Ollama LLM 매핑 보정 | **선택** — 없거나 모델 미탑재 시 규칙 fallback, `llm_error`/`used_rule_fallback`로 구분 |
-| 모의 EDC / K-EDC | **미연동** — export artifact의 future flag만 존재 |
-| Workbench RBAC / Identity | **미구현** — `actor` 문자열만 기록 |
+| 기본 Rulebook (`KMX_RULEBOOK_SOURCE=field_dictionary`) | KMX field dictionary 어댑터 — **플랫폼 어휘, KSA 인증 아님** |
+| Mock Rulebook (`KMX_RULEBOOK_SOURCE=mock`) | 합성 fixture |
+| Agent Workflow + HITL + Evidence + export 게이트 | **동작** |
+| Workbench Identity/RBAC | DID + VC `workbench_roles` (`approver`/`reviewer`/`admin`) |
+| Ollama LLM | 기본 `OLLAMA_MODEL=gemma3:12b`, 미탑재 시 규칙 fallback |
+| 모의 EDC / K-EDC | **미연동** — future flag만 |
 
-상세: `docs/manufacturing_agent_workbench.md`
+환경변수 예: `.env.example` · 상세: `docs/manufacturing_agent_workbench.md`
 
 ---
 
