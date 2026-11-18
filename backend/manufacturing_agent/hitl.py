@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from manufacturing_agent.rulebook.json_adapter import JsonRulebookAdapter
+from manufacturing_agent.auth import ReviewAuth, require_action
+from manufacturing_agent.rulebook.factory import get_rulebook_adapter
 from manufacturing_agent.schemas import (
     MappingCandidate,
     ReviewActionRequest,
@@ -15,10 +16,14 @@ from manufacturing_agent.store import save_run
 from manufacturing_agent.tools.validate import validate_mapping
 
 
-def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRun:
-    actor = (request.actor or "").strip()
-    if not actor:
-        raise ValueError("actor is required for review actions (client-supplied identity; no RBAC yet)")
+def apply_review(
+    run: WorkbenchRun,
+    request: ReviewActionRequest,
+    *,
+    auth: ReviewAuth,
+) -> WorkbenchRun:
+    require_action(auth, request.action)
+    actor = auth.actor_did
 
     before = [c.model_dump() for c in run.mapping.candidates]
     history_entry: dict[str, Any] = {
@@ -26,6 +31,7 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
         "actor": actor,
         "action": request.action,
         "reason": request.reason,
+        "auth": auth.to_history(),
     }
 
     if request.action == "reject":
@@ -42,7 +48,7 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
             raise ValueError("Cannot approve while validation has FAIL issues")
         run.review_status = ReviewStatus.APPROVED
         run.status = "approved"
-        run.approved_artifact = build_approved_artifact(run, approver=actor)
+        run.approved_artifact = build_approved_artifact(run, auth=auth)
         history_entry["diff"] = {"before": before, "after": before}
     elif request.action == "modify":
         if not request.modified_candidates:
@@ -54,7 +60,7 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
         after = [c.model_dump() for c in after_models]
         run.mapping.candidates = after_models
         # Re-validate after human edits so Evidence stays linked to current candidates.
-        report, validate_trace = validate_mapping(run.profile, run.mapping, JsonRulebookAdapter())
+        report, validate_trace = validate_mapping(run.profile, run.mapping, get_rulebook_adapter())
         run.validation = report
         run.evidence.validation = report
         run.evidence.tool_traces.append(ToolTrace.model_validate(validate_trace))
@@ -76,7 +82,13 @@ def apply_review(run: WorkbenchRun, request: ReviewActionRequest) -> WorkbenchRu
     return run
 
 
-def build_approved_artifact(run: WorkbenchRun, *, approver: str = "user") -> dict[str, Any]:
+def build_approved_artifact(run: WorkbenchRun, *, auth: ReviewAuth | None = None, approver: str | None = None) -> dict[str, Any]:
+    actor = (auth.actor_did if auth else None) or approver or "unknown"
+    approver_auth: dict[str, Any] | str
+    if auth is not None:
+        approver_auth = auth.to_history()
+    else:
+        approver_auth = {"auth_mode": "legacy_approver_string", "actor": actor}
     return {
         "artifact_type": "kmx.manufacturing_agent.mapping",
         "interface": {
@@ -87,8 +99,8 @@ def build_approved_artifact(run: WorkbenchRun, *, approver: str = "user") -> dic
         },
         "run_id": run.run_id,
         "approved_at": utc_now(),
-        "approver": approver,
-        "approver_auth": "client_supplied_actor_only",
+        "approver": actor,
+        "approver_auth": approver_auth,
         "raw_hash": run.profile.raw_hash,
         "artifact_hash_basis": {
             "raw_hash": run.profile.raw_hash,

@@ -142,4 +142,5 @@ class ReviewActionRequest(BaseModel):
     action: Literal["approve", "modify", "reject"]
     reason: str = ""
     modified_candidates: list[MappingCandidate] | None = None
-    actor: str = "user"
+    actor: str = Field(..., description="did:kmx:... of the reviewer/approver")
+    vc_id: str | None = None
