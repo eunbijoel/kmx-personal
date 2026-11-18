@@ -2,8 +2,8 @@
 {% block content %}
 <div class="card">
   <h2>Manufacturing AI Agent Workbench</h2>
-  <p>Upload manufacturing data → retrieve mock rulebook evidence → map with rules/LLM → validate → review → export approved JSON.</p>
-  <p style="color:#b45309;font-size:13px;">Rulebook is a <strong>test mock</strong>, not an official KSA/ISO/IDTA standard. LLM suggestions are advisory only.</p>
+  <p>Upload manufacturing data → retrieve rulebook evidence → map with rules/LLM → validate → identity-gated review → export approved JSON.</p>
+  <p style="color:#b45309;font-size:13px;">Default rulebook is the KMX field dictionary (platform vocabulary), <strong>not</strong> an official KSA/ISO/IDTA standard. LLM suggestions are advisory only. Approvals require a DID + workbench role VC.</p>
 </div>
 
 <div class="card">
@@ -22,11 +22,17 @@
         <option value="false" selected>false (rule fallback)</option>
         <option value="true">true</option>
       </select>
+      <label>Rulebook source</label>
+      <select id="wbRulebook">
+        <option value="field_dictionary" selected>field_dictionary (KMX control-plane)</option>
+        <option value="mock">mock (synthetic JSON fixture)</option>
+      </select>
       <div class="grid" style="margin-top:12px">
         <button class="btn" onclick="runUpload()">Run Agent</button>
         <button class="btn secondary" onclick="runSample()">Load BMS sample</button>
       </div>
       <p id="wbStatus"></p>
+      <p id="wbLlmStatus" style="font-size:12px;color:#475569"></p>
     </div>
   </div>
 </div>
@@ -47,16 +53,28 @@
 </div>
 
 <div class="card">
-  <h3>Human Review</h3>
+  <h3>Human Review (Identity)</h3>
   <p id="wbReviewMeta"></p>
-  <label>Reason</label>
-  <input id="wbReason" placeholder="optional review reason">
   <div class="grid">
-    <button class="btn" onclick="review('approve')">Approve</button>
-    <button class="btn secondary" onclick="review('reject')">Reject</button>
-    <button class="btn secondary" onclick="exportJson()">Export Approved JSON</button>
+    <div>
+      <label>Actor DID</label>
+      <input id="wbActor" placeholder="did:kmx:...">
+      <label>VC ID (optional)</label>
+      <input id="wbVcId" placeholder="vc:kmx:...">
+      <label>Reason</label>
+      <input id="wbReason" placeholder="optional review reason">
+    </div>
+    <div>
+      <button class="btn secondary" onclick="bootstrapIdentity()">Issue local approver identity</button>
+      <p id="wbIdentity" style="font-size:12px;color:#475569"></p>
+      <div class="grid" style="margin-top:12px">
+        <button class="btn" onclick="review('approve')">Approve</button>
+        <button class="btn secondary" onclick="review('reject')">Reject</button>
+        <button class="btn secondary" onclick="exportJson()">Export Approved JSON</button>
+      </div>
+      <p id="wbReviewResult"></p>
+    </div>
   </div>
-  <p id="wbReviewResult"></p>
 </div>
 
 <style>
@@ -69,6 +87,17 @@
 let currentRun = null;
 
 function setStatus(msg) { document.getElementById("wbStatus").textContent = msg; }
+
+async function refreshLlmStatus() {
+  try {
+    const res = await fetch("/ui/api/agent-workbench/llm-status");
+    const data = await res.json();
+    document.getElementById("wbLlmStatus").textContent =
+      `Ollama preferred=${data.preferred_model || "?"} resolved=${data.model || "?"} loaded=${data.model_loaded} ${data.error || ""}`;
+  } catch (err) {
+    document.getElementById("wbLlmStatus").textContent = "LLM status unavailable";
+  }
+}
 
 function renderRun(run) {
   currentRun = run;
@@ -85,6 +114,7 @@ function renderRun(run) {
     llm_available: run.mapping?.llm_available,
     llm_error: run.mapping?.llm_error,
     used_rule_fallback: run.mapping?.used_rule_fallback,
+    model_name: run.mapping?.model_name,
     uncertain_fields: run.mapping?.uncertain_fields,
     candidates: run.mapping?.candidates,
     retrieved_rules: run.retrieved_rules,
@@ -109,6 +139,7 @@ async function runUpload() {
   form.append("equipment_description", document.getElementById("wbEquip").value || "");
   form.append("process_description", document.getElementById("wbProcess").value || "");
   form.append("allow_llm", document.getElementById("wbLlm").value);
+  form.append("rulebook_source", document.getElementById("wbRulebook").value);
   const res = await fetch("/ui/api/agent-workbench/run-upload", { method: "POST", body: form });
   const data = await res.json();
   if (!res.ok) { setStatus(data.detail || "Failed"); return; }
@@ -123,6 +154,7 @@ async function runSample() {
   form.append("equipment_description", document.getElementById("wbEquip").value || "");
   form.append("process_description", document.getElementById("wbProcess").value || "");
   form.append("allow_llm", "false");
+  form.append("rulebook_source", document.getElementById("wbRulebook").value);
   const res = await fetch("/ui/api/agent-workbench/run-sample", { method: "POST", body: form });
   const data = await res.json();
   if (!res.ok) { setStatus(data.detail || "Failed"); return; }
@@ -130,16 +162,41 @@ async function runSample() {
   renderRun(data);
 }
 
+async function bootstrapIdentity() {
+  const res = await fetch("/ui/api/agent-workbench/bootstrap-identity", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ subject_hint: "workbench-approver", roles: ["approver", "reviewer"] }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    document.getElementById("wbIdentity").textContent = data.detail || "Identity bootstrap failed";
+    return;
+  }
+  document.getElementById("wbActor").value = data.actor;
+  document.getElementById("wbVcId").value = data.vc_id;
+  document.getElementById("wbIdentity").textContent =
+    `Issued ${data.actor} roles=${(data.roles || []).join(",")}`;
+}
+
 async function review(action) {
   if (!currentRun) { document.getElementById("wbReviewResult").textContent = "No run loaded."; return; }
+  const actor = document.getElementById("wbActor").value.trim();
+  if (!actor) {
+    document.getElementById("wbReviewResult").textContent = "Actor DID required. Click Issue local approver identity.";
+    return;
+  }
+  const payload = {
+    action,
+    reason: document.getElementById("wbReason").value || "",
+    actor,
+  };
+  const vcId = document.getElementById("wbVcId").value.trim();
+  if (vcId) payload.vc_id = vcId;
   const res = await fetch(`/ui/api/agent-workbench/runs/${currentRun.run_id}/review`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      action,
-      reason: document.getElementById("wbReason").value || "",
-      actor: "user",
-    }),
+    body: JSON.stringify(payload),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -167,5 +224,7 @@ async function exportJson() {
   URL.revokeObjectURL(url);
   document.getElementById("wbReviewResult").textContent = "Approved JSON downloaded.";
 }
+
+refreshLlmStatus();
 </script>
 {% endblock %}
