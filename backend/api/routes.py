@@ -17,7 +17,7 @@ from db.models import AIModel, ConnectorRegistry, DID, DataContract, DatasetMeta
 
 router = APIRouter()
 OLLAMA_GENERATE_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = "qwen3:14b"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:12b")
 
 MODEL_CATALOG = {
     "predictive-maintenance": "Predict machine failure risk from telemetry.",
