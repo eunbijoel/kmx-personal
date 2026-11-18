@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from manufacturing_agent.llm import OLLAMA_MODEL, PROMPT_VERSION, check_ollama_available, generate_json
+from manufacturing_agent.llm import PROMPT_VERSION, check_ollama_available, generate_json
 from manufacturing_agent.schemas import (
     DataProfile,
     MappingCandidate,
@@ -108,11 +108,12 @@ async def propose_mappings(
                 llm_payload = await _llm_refine(profile, rule_hits, rule_candidates)
                 candidates = _merge_llm(rule_candidates, llm_payload)
                 used_fallback = False
-                model_name = OLLAMA_MODEL
+                model_name = str(status.get("model") or "")
             except Exception as exc:  # noqa: BLE001
-                llm_error = str(exc)
+                llm_error = str(exc).strip() or f"{exc.__class__.__name__}: LLM refine failed"
                 candidates = rule_candidates
                 used_fallback = True
+                model_name = None
 
     proposal = MappingProposal(
         candidates=candidates,
@@ -144,6 +145,7 @@ async def _llm_refine(
     rule_hits: list[RuleHit],
     rule_candidates: list[MappingCandidate],
 ) -> dict[str, Any]:
+    # Keep prompt compact for local models (e.g. gemma3:12b).
     prompt = {
         "task": "semantic_mapping",
         "instructions": [
@@ -155,11 +157,39 @@ async def _llm_refine(
         ],
         "equipment_description": profile.equipment_description,
         "process_description": profile.process_description,
-        "fields": [f.model_dump() for f in profile.fields],
-        "retrieved_rules": [h.model_dump() for h in rule_hits[:40]],
-        "rule_baseline": [c.model_dump() for c in rule_candidates],
+        "fields": [
+            {
+                "field_name": f.field_name,
+                "inferred_type": f.inferred_type,
+                "sample_values": f.sample_values[:3],
+            }
+            for f in profile.fields
+        ],
+        "retrieved_rules": [
+            {
+                "concept_id": h.concept_id,
+                "name": h.name,
+                "score": h.score,
+                "matched_on": h.matched_on,
+                "source_field": h.source_field,
+                "aas_submodel": h.aas_submodel,
+                "aas_property": h.aas_property,
+                "unit": h.unit,
+            }
+            for h in rule_hits[:24]
+        ],
+        "rule_baseline": [
+            {
+                "source_field": c.source_field,
+                "concept_id": c.concept_id,
+                "decision": c.decision,
+                "confidence": c.confidence,
+                "evidence_ids": c.evidence_ids,
+            }
+            for c in rule_candidates
+        ],
     }
-    return await generate_json(json.dumps(prompt, ensure_ascii=False))
+    return await generate_json(json.dumps(prompt, ensure_ascii=False), timeout=180.0)
 
 
 def _merge_llm(
